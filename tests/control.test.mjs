@@ -75,8 +75,8 @@ test("buildGrokArgs emits control surface flags", () => {
   assert.ok(args.includes("--fork-session"));
   assert.ok(args.includes("--max-turns"));
   assert.ok(args.includes("3"));
-  // plan mode must not yolo
-  assert.ok(!args.includes("--yolo"));
+  // plan mode must not auto-approve writes
+  assert.ok(!args.includes("--always-approve"));
 });
 
 test("buildGrokArgs memory off uses --no-memory", () => {
@@ -100,11 +100,12 @@ test("parseArgs accumulates array options for allow/deny", () => {
 
 test("controlToJobConfig persists schema fields", () => {
   const control = normalizeControlOptions({ sandbox: "strict", planMode: true });
-  const config = controlToJobConfig(control, { bestOfN: 3, check: true });
+  const config = controlToJobConfig(control, { bestOfN: 3, check: true, requireEdit: true });
   assert.equal(config.sandbox, "strict");
   assert.equal(config.planMode, true);
   assert.equal(config.bestOfN, 3);
   assert.equal(config.check, true);
+  assert.equal(config.requireEdit, true);
 });
 
 test("compareSemver works", () => {

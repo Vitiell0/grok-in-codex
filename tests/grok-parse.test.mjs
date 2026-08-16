@@ -6,8 +6,10 @@ import {
   buildGrokBackgroundWrapperSource,
   formatStreamProgressMessage,
   getStreamProgressHelperSource,
+  getStreamStateHelperSource,
   humanizeGrokFailure,
-  parseGrokJsonOutput
+  parseGrokJsonOutput,
+  parseGrokStreamingOutput
 } from "../plugins/grok/scripts/lib/grok.mjs";
 
 test("parseGrokJsonOutput reads success payload", () => {
@@ -30,23 +32,25 @@ test("parseGrokJsonOutput reads error payload", () => {
   assert.match(parsed.error, /nope/);
 });
 
-test("buildGrokArgs write mode uses yolo", () => {
-  const args = buildGrokArgs({ prompt: "hi", write: true, model: "grok-4.5" });
-  assert.ok(args.includes("--yolo"));
+test("buildGrokArgs write mode uses the documented automation flag", () => {
+  const args = buildGrokArgs({ prompt: "hi", write: true, model: "grok-4.6" });
+  assert.ok(args.includes("--always-approve"));
   assert.ok(args.includes("-m"));
-  assert.ok(args.includes("grok-4.5"));
+  assert.ok(args.includes("grok-4.6"));
+  assert.ok(args.includes("--rules"));
+  assert.ok(args.some((arg) => String(arg).includes("hypothetical diff")));
 });
 
 test("buildGrokArgs read-only mode uses denylist not allowlist", () => {
   const args = buildGrokArgs({ prompt: "review", write: false });
-  assert.ok(!args.includes("--yolo"));
+  assert.ok(!args.includes("--always-approve"));
   assert.ok(!args.includes("--tools"));
   assert.ok(args.includes("--disallowed-tools"));
   assert.ok(args.some((a) => String(a).includes("run_terminal_cmd")));
   assert.ok(args.includes("--rules"));
 });
 
-test("buildGrokArgs media mode avoids tools allowlist and yolo", () => {
+test("buildGrokArgs media mode avoids tools allowlist and always-approve", () => {
   const args = buildGrokArgs({
     prompt: "draw a banner",
     media: true,
@@ -54,7 +58,7 @@ test("buildGrokArgs media mode avoids tools allowlist and yolo", () => {
     yolo: false
   });
   assert.ok(!args.includes("--tools"));
-  assert.ok(!args.includes("--yolo"));
+  assert.ok(!args.includes("--always-approve"));
   assert.ok(args.includes("--disallowed-tools"));
   assert.ok(args.some((a) => String(a).includes("run_terminal_cmd")));
 });
@@ -82,6 +86,83 @@ test("parseGrokJsonOutput humanizes bare RequirementError text", () => {
   );
   assert.equal(parsed.ok, false);
   assert.match(parsed.error, /tool configuration|requirement error/i);
+});
+
+test("parseGrokStreamingOutput records completed editor calls and paths", () => {
+  const stdout = [
+    JSON.stringify({ type: "text", data: "Editing now" }),
+    JSON.stringify({
+      type: "tool_call",
+      toolCallId: "edit-1",
+      toolName: "search_replace",
+      kind: "edit",
+      status: "pending",
+      rawInput: { file_path: "src/app.ts" }
+    }),
+    JSON.stringify({
+      type: "tool_call_update",
+      toolCallId: "edit-1",
+      status: "completed",
+      locations: [{ path: "src/app.ts" }]
+    }),
+    JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "sess-edit" })
+  ].join("\n");
+
+  const parsed = parseGrokStreamingOutput(stdout);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.text, "Editing now");
+  assert.equal(parsed.sessionId, "sess-edit");
+  assert.deepEqual(parsed.editSummary, {
+    completedEditCalls: 1,
+    tools: ["search_replace"],
+    paths: ["src/app.ts"]
+  });
+});
+
+test("parseGrokStreamingOutput does not mistake narrated tool markers for edits", () => {
+  const stdout = [
+    JSON.stringify({ type: "thought", data: "<|tool_call_begin|>search_replace..." }),
+    JSON.stringify({ type: "text", data: "I fixed src/app.ts" }),
+    JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "sess-false" })
+  ].join("\n");
+
+  const parsed = parseGrokStreamingOutput(stdout);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.editSummary.completedEditCalls, 0);
+  assert.deepEqual(parsed.editSummary.paths, []);
+});
+
+test("parseGrokStreamingOutput rejects cancelled editor calls as completion evidence", () => {
+  const stdout = [
+    JSON.stringify({
+      type: "tool_call",
+      toolCallId: "edit-1",
+      toolName: "write",
+      kind: "edit",
+      status: "pending",
+      rawInput: { file_path: "src/app.ts" }
+    }),
+    JSON.stringify({
+      type: "tool_call_update",
+      toolCallId: "edit-1",
+      status: "cancelled"
+    }),
+    JSON.stringify({ type: "end", stopReason: "EndTurn" })
+  ].join("\n");
+
+  const parsed = parseGrokStreamingOutput(stdout);
+  assert.equal(parsed.editSummary.completedEditCalls, 0);
+});
+
+test("parseGrokStreamingOutput propagates structured stream errors", () => {
+  const stdout = [
+    JSON.stringify({ type: "available_commands", tools: ["read_file"] }),
+    JSON.stringify({ type: "error", message: "session failed" })
+  ].join("\n");
+
+  const parsed = parseGrokStreamingOutput(stdout);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error, "session failed");
 });
 
 test("formatStreamProgressMessage tails accumulated text", () => {
@@ -124,6 +205,7 @@ test("formatStreamProgressMessage tails thinking with prefix (not single token)"
 
 test("background wrapper embeds the same progress helper tests exercise", () => {
   const helperSrc = getStreamProgressHelperSource();
+  const stateHelperSrc = getStreamStateHelperSource();
   assert.equal(helperSrc, formatStreamProgressMessage.toString());
 
   // The string that lands in the worker is the live function body — evaluate it.
@@ -149,10 +231,13 @@ test("background wrapper embeds the same progress helper tests exercise", () => 
     cwd: "/tmp",
     streaming: true
   });
+  assert.doesNotThrow(() => new Function(wrapper));
   assert.ok(
     wrapper.includes(helperSrc),
     "worker script must contain the helper source (not a drifted copy)"
   );
+  assert.ok(wrapper.includes(stateHelperSrc));
+  assert.match(wrapper, /editSummary/);
   assert.ok(!wrapper.includes("formatProgressTail"), "old inline copy must be gone");
   assert.match(wrapper, /formatStreamProgressMessage\(thoughtAcc/);
   assert.match(wrapper, /formatStreamProgressMessage\(textAcc/);

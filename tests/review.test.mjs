@@ -35,7 +35,7 @@ test("tryParseStructuredReview parses fenced JSON", () => {
   assert.equal(reviewHasBlockingFindings(review), true);
 });
 
-test("buildGrokArgs supports best-of-n check worktree schema", () => {
+test("buildGrokArgs supports best-of-n worktree schema without removed --check", () => {
   const args = buildGrokArgs({
     prompt: "fix it",
     write: true,
@@ -46,20 +46,20 @@ test("buildGrokArgs supports best-of-n check worktree schema", () => {
   });
   assert.ok(args.includes("--best-of-n"));
   assert.ok(args.includes("3"));
-  assert.ok(args.includes("--check"));
+  assert.ok(!args.includes("--check"));
   assert.ok(args.includes("--worktree"));
   assert.ok(args.includes("rescue-1"));
   assert.ok(args.includes("--json-schema"));
-  assert.ok(args.includes("--yolo"));
+  assert.ok(args.includes("--always-approve"));
 });
 
-test("buildGrokArgs media mode uses denylist without yolo", () => {
+test("buildGrokArgs media mode uses denylist without always-approve", () => {
   const args = buildGrokArgs({
     prompt: "draw",
     media: true
   });
   assert.ok(!args.includes("--tools"));
-  assert.ok(!args.includes("--yolo"));
+  assert.ok(!args.includes("--always-approve"));
   assert.ok(args.includes("--disallowed-tools"));
 });
 

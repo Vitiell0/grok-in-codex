@@ -1,6 +1,6 @@
 {
   "name": "grok-in-codex",
-  "version": "0.5.8",
+  "version": "0.6.0",
   "private": true,
   "description": "Codex plugin for orchestrating Grok Build (rescue, plan, design, workflows, reviews, media, docs)",
   "type": "module",
@@ -15,11 +15,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stdevMac/grok-in-codex.git"
+    "url": "git+https://github.com/Vitiell0/grok-in-codex.git"
   },
   "bugs": {
-    "url": "https://github.com/stdevMac/grok-in-codex/issues"
+    "url": "https://github.com/Vitiell0/grok-in-codex/issues"
   },
-  "homepage": "https://github.com/stdevMac/grok-in-codex#readme",
+  "homepage": "https://github.com/Vitiell0/grok-in-codex#readme",
   "license": "Apache-2.0"
 }

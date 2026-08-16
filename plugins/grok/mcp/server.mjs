@@ -6,7 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
-const SERVER_VERSION = "0.5.8";
+const SERVER_VERSION = "0.6.0";
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const COMPANION = path.join(ROOT_DIR, "scripts", "grok-companion.mjs");
 
@@ -21,9 +21,17 @@ const WORKSPACE_PROPERTY = {
 
 /** Shared control surface for long-running Grok jobs (mirrors Claude companion flags). */
 const CONTROL_PROPERTIES = {
-  sandbox: stringSchema("Grok sandbox profile (e.g. read-only, workspace-write)."),
+  sandbox: {
+    type: "string",
+    enum: ["off", "workspace", "read-only", "strict", "devbox"],
+    description: "Grok CLI 1.0.x sandbox profile. Use workspace for write-capable repository jobs."
+  },
   planMode: booleanSchema("Enable Grok plan mode (--plan)."),
-  permissionMode: stringSchema("Permission mode passed to Grok."),
+  permissionMode: {
+    type: "string",
+    enum: ["default", "acceptEdits", "auto", "dontAsk", "bypassPermissions", "plan"],
+    description: "Grok CLI 1.0.x permission mode. Unattended writes use always-approve."
+  },
   agent: stringSchema("Grok agent name to use."),
   noSubagents: booleanSchema("Disable Grok subagents."),
   memory: booleanSchema("Enable memory for this session."),
@@ -46,7 +54,7 @@ const CONTROL_PROPERTIES = {
 const COMMON_JOB_PROPERTIES = {
   ...WORKSPACE_PROPERTY,
   background: booleanSchema("Start a background job and return the job id."),
-  model: stringSchema("Grok model id or alias, such as fast or deep."),
+  model: stringSchema("Grok model id or compatibility alias. Defaults to grok-4.6."),
   effort: stringSchema("Reasoning effort: none, minimal, low, medium, high, xhigh, or max."),
   json: booleanSchema("Return machine-readable JSON from the companion."),
   ...CONTROL_PROPERTIES
@@ -84,7 +92,9 @@ const TOOL_DEFINITIONS = [
         worktree: booleanSchema("Run edits in a Grok-managed git worktree."),
         worktreeName: stringSchema("Name for a Grok-managed git worktree."),
         worktreeRef: stringSchema("Base ref for the Grok worktree."),
-        check: booleanSchema("Ask Grok to verify its own work before returning."),
+        check: booleanSchema(
+          "Deprecated compatibility flag. Write rescues always require a completed editor tool call."
+        ),
         bestOfN: integerSchema("Run N parallel attempts of the same task and keep the best."),
         verbatim: booleanSchema("Avoid adding extra wrapper instructions to the prompt."),
         ...COMMON_JOB_PROPERTIES
@@ -181,7 +191,7 @@ const TOOL_DEFINITIONS = [
         designDoc: stringSchema("Path to design doc. Omit with latest=true."),
         latest: booleanSchema("Use the latest design doc under .grok-designs/."),
         concurrency: integerSchema("Parallel PR plan concurrency."),
-        dryRun: booleanSchema("Dry-run only (read-only, no yolo)."),
+        dryRun: booleanSchema("Dry-run only (read-only, without always-approve)."),
         autoPr: booleanSchema("Open PRs automatically when the plan supports it."),
         noGraphite: booleanSchema("Disable Graphite stacking."),
         resume: stringSchema("Resume a prior execute-plan PLAN_ID."),

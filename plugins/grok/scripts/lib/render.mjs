@@ -41,10 +41,10 @@ export function renderSetupReport(payload) {
   }
   if (payload.versionOk === false) {
     lines.push(
-      `- **Version floor**: ⚠ below minimum ${payload.minVersion || "0.2.118"} (some features may fail)`
+      `- **Version floor**: ⚠ below minimum ${payload.minVersion || "1.0.0"} (some features may fail)`
     );
   } else if (payload.versionOk) {
-    lines.push(`- **Version floor**: ok (≥ ${payload.minVersion || "0.2.118"})`);
+    lines.push(`- **Version floor**: ok (≥ ${payload.minVersion || "1.0.0"})`);
   }
   lines.push(`- **Auth**: ${payload.authenticated ? "ok" : "not ready"}`);
   if (payload.authDetail) {
@@ -218,7 +218,14 @@ export function renderTaskResult(payload) {
     lines.push(`- **Worktree**: enabled`);
   }
   if (payload.check) {
-    lines.push(`- **Self-check**: enabled`);
+    lines.push(`- **Legacy check flag**: accepted (verification remains external)`);
+  }
+  if (payload.editSummary) {
+    lines.push(`- **Completed editor calls**: ${payload.editSummary.completedEditCalls || 0}`);
+    if (payload.editSummary.paths?.length) {
+      const paths = payload.editSummary.paths.map((p) => `\`${p}\``).join(", ");
+      lines.push(`- **Reported edit paths**: ${paths}`);
+    }
   }
   if (payload.grokSessionId) {
     lines.push(`- **Grok session**: \`${payload.grokSessionId}\``);
@@ -232,7 +239,7 @@ export function renderTaskResult(payload) {
   } else if (payload.kind === "plan" || payload.config?.planMode) {
     lines.push("- **Mode**: plan (`--permission-mode plan`)");
   } else if (payload.write) {
-    lines.push("- **Mode**: write-capable (`--yolo`)");
+    lines.push("- **Mode**: write-capable (`--always-approve`)");
   } else {
     lines.push("- **Mode**: read-only (denylist)");
   }
@@ -435,7 +442,8 @@ export function renderStoredJobResult(job) {
     postPending: job.postPending || null,
     bestOfN: job.bestOfN ?? job.config?.bestOfN,
     worktree: job.worktree ?? job.config?.worktree,
-    check: job.check ?? job.config?.check
+    check: job.check ?? job.config?.check,
+    editSummary: job.editSummary || null
   });
 }
 

@@ -2,11 +2,11 @@
 
 Use [Grok](https://grok.com) from inside Codex for code reviews, delegated coding, planning, multi-agent workflows, design→execute pipelines, PR babysitting, and image/video/document generation.
 
-**Plugin version:** 0.5.8. Codex stays the orchestrator. A thin MCP server + companion script hands real work to Grok on your machine via the local CLI (Grok Build ≥ **0.2.118** recommended).
+**Plugin version:** 0.6.0. Codex stays the orchestrator. A thin MCP server + companion script hands real work to Grok on your machine via Grok Build CLI **1.0.x** (minimum **1.0.0**, **1.0.4** recommended).
 
 Artifact dirs (gitignored): `.grok-plans/`, `.grok-designs/`, `.grok-workflows/`, `.grok-docs/`, `.grok-reviews/`, `.grok-media/`.
 
-Using Claude Code instead? Use the sibling plugin: [grok-in-claude](https://github.com/stdevMac/grok-in-claude).
+This fork adds Grok Build 1.0.x compatibility and write-completion verification to [stdevMac/grok-in-codex](https://github.com/stdevMac/grok-in-codex). Using Claude Code instead? See [grok-in-claude](https://github.com/stdevMac/grok-in-claude).
 
 ## What you get
 
@@ -37,7 +37,7 @@ Skills: brand/media recipes, routing (including plan→design→execute-plan), r
 ## Requirements
 
 - **Node.js 18.18 or later**
-- **[Grok Build CLI](https://grok.com)** (`grok`) on your `PATH`
+- **[Grok Build CLI](https://docs.x.ai/build/overview)** (`grok`) 1.0.x on your `PATH`
 - **Grok authentication** (`grok login`)
 - **GitHub CLI (`gh`)** only if you use `grok_review` with PRs or post-pending
 
@@ -48,7 +48,7 @@ Typical CLI location: `~/.grok/bin/grok` (ensure it is on `PATH`).
 From GitHub:
 
 ```bash
-codex plugin marketplace add stdevMac/grok-in-codex
+codex plugin marketplace add Vitiell0/grok-in-codex
 codex plugin add grok@grok-in-codex
 ```
 
@@ -98,6 +98,8 @@ grok_image aspect="16:9" prompt="Dark developer-tool launch banner"
 grok_video image="./.grok-media/image/hero.png" duration="6" prompt="gentle camera push-in"
 ```
 
+Write-capable rescues default to `grok-4.6` with `effort=high`. The companion consumes Grok 1.0.x `streaming-json` events and requires a completed `search_replace` or `write` event with a reported edit path. A successful process exit containing only a narrated or hypothetical patch is stored as a failed job. This attestation does not replace inspecting the actual Git diff.
+
 ### Workspace selection
 
 Codex starts an installed plugin MCP server from the plugin cache, so pass the active project
@@ -125,15 +127,18 @@ For multi-PR or ambiguous product work, prefer:
 - **Concurrent multi-job support** — no single-job global lock. Prefer `background=true` for long work.
 - **Status** — live progress is a tail of accumulated text *and* thought streams; empty/whitespace-only stream tokens floor to `running`.
 - **Result** — plan jobs prefer harvested `plan.md` body over narration; finished jobs persist `config`, `usage`, and `artifacts` (v3 schema).
+- **Write proof** — write rescues persist completed editor tools and reported paths; zero-edit narration fails closed.
 - **Reaper** — dead pid + complete parseable `result.json` reconciles to completed; dead pid + empty/truncated/incomplete result → terminal **failed** with distinct diagnostics (no forever-`running` zombies).
 - **Atomic writes** — background workers write `result.json` via tmp + rename (no partial mid-write; no leftover `.tmp.*` after success).
 - **PR post-pending** — runs on background completion too; skips empty findings; empty/oversize diffs fail closed with recoverable findings under `.grok-reviews/`.
 
 ## CLI posture
 
+- Follow the official [sandbox profiles](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/18-sandbox.md) and [permissions guidance](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/22-permissions-and-safety.md).
 - Prefer **denylist** (`--disallowed-tools`) over tools allowlist.
-- Media: no yolo / no tools allowlist.
-- `dryRun` / `validateOnly` / babysit `list`: **read-only** (no yolo).
+- Write automation uses Grok 1.0.x `--always-approve` inside the selected sandbox.
+- Media: no always-approve / no tools allowlist.
+- `dryRun` / `validateOnly` / babysit `list`: **read-only** (no always-approve).
 
 ## Environment variables
 
@@ -151,7 +156,8 @@ Default state root when unset: `~/.grok/codex-plugin/state/`. Codex does **not**
 
 - Write-capable by default.
 - Use `readOnly=true` for investigation-only work.
-- Use `worktree=true` / `check=true` / `bestOfN` for safer or parallel attempts.
+- Use `worktree=true` / `bestOfN` for isolated or parallel attempts.
+- `check` remains accepted for caller compatibility but is not passed to Grok 1.0.x; verify lint, tests, builds, and the final diff independently.
 - Full control surface available (sandbox, memory, agent, allow/deny, maxTurns, …).
 
 ### Plan / design / execute

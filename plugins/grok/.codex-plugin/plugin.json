@@ -1,13 +1,13 @@
 {
   "name": "grok",
-  "version": "0.5.8",
+  "version": "0.6.0",
   "description": "Use Grok from Codex for reviews, rescue, plan, design, workflows, docs, and media.",
   "author": {
     "name": "stdevMac",
     "url": "https://github.com/stdevMac"
   },
-  "homepage": "https://github.com/stdevMac/grok-in-codex",
-  "repository": "https://github.com/stdevMac/grok-in-codex",
+  "homepage": "https://github.com/Vitiell0/grok-in-codex",
+  "repository": "https://github.com/Vitiell0/grok-in-codex",
   "license": "Apache-2.0",
   "keywords": [
     "grok",
@@ -25,14 +25,14 @@
     "displayName": "Grok",
     "shortDescription": "Delegate reviews, rescue, plan, design, workflows, docs, and media to Grok",
     "longDescription": "Use the Grok CLI from Codex for structured code review, plan/design/execute pipelines, Rhai workflows, PR babysitting, documents, background jobs, image/video generation, job status, result retrieval, cancellation, and context transfer.",
-    "developerName": "stdevMac",
+    "developerName": "Vitiell0",
     "category": "Developer Tools",
     "capabilities": [
       "Interactive",
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/stdevMac/grok-in-codex",
+    "websiteURL": "https://github.com/Vitiell0/grok-in-codex",
     "defaultPrompt": [
       "Ask Grok to review this branch",
       "Use Grok to plan the auth rewrite",

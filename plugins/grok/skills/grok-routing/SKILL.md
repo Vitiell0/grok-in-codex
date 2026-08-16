@@ -31,7 +31,7 @@ user-invocable: false
 
 | User intent | Prefer |
 | --- | --- |
-| Stuck on a bug / implement a fix | `grok_rescue` (+ worktree + check) |
+| Stuck on a bug / implement a fix | `grok_rescue` (+ worktree when isolation helps) |
 | Unclear approach before coding | `grok_plan` |
 | Architecture / design doc + PR plan | `grok_design` |
 | Ship a design doc’s PR DAG | `grok_execute_plan` (or `latest=true` after design) |
@@ -82,6 +82,7 @@ How:
 2. Start each MCP tool with `background=true` when it may take time.
 3. Track each job id via `grok_status`.
 4. Collect results with `grok_result`.
+5. For writers, require a nonzero `editSummary`, inspect the real diff, and run verification independently.
 
 Do **not** serialize independent Grok work just because another job is running.
 

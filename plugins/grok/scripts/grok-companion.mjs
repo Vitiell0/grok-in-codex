@@ -99,13 +99,16 @@ import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const VALID_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const MODEL_ALIASES = new Map([
-  ["fast", "grok-composer-2.5-fast"],
-  ["default", "grok-4.5"],
-  ["deep", "grok-4.5"],
-  ["grok", "grok-4.5"]
+  ["fast", "grok-4.6"],
+  ["default", "grok-4.6"],
+  ["deep", "grok-4.6"],
+  ["grok", "grok-4.6"]
 ]);
 const PRESET_EFFORT = new Map([
-  ["deep", "high"]
+  ["fast", "high"],
+  ["default", "high"],
+  ["deep", "high"],
+  ["grok", "high"]
 ]);
 
 function printUsage() {
@@ -114,7 +117,7 @@ function printUsage() {
       "Usage:",
       "  setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  task [--background] [--read-only] [--resume-last|--resume-session <id>|--fresh]",
-      "       [--model <id|fast|deep>] [--effort <level>] [--worktree [name]] [--check]",
+      "       [--model <id|fast|deep>] [--effort <level>] [--worktree [name]]",
       "       [--best-of-n <n>] [--sandbox <profile>] [--plan] [--permission-mode <mode>]",
       "       [--agent <name>] [--no-subagents] [--memory|--no-memory]",
       "       [--allow RULE]... [--deny RULE]... [--disable-web-search] [--fork-session]",
@@ -173,7 +176,7 @@ function outputResult(value, asJson) {
 
 function normalizeModel(model) {
   if (model == null) {
-    return null;
+    return "grok-4.6";
   }
   const normalized = String(model).trim();
   if (!normalized) {
@@ -187,7 +190,7 @@ function normalizeEffort(effort, modelAlias) {
     return PRESET_EFFORT.get(String(modelAlias).toLowerCase());
   }
   if (effort == null) {
-    return null;
+    return "high";
   }
   const normalized = String(effort).trim().toLowerCase();
   if (!normalized) {
@@ -266,9 +269,26 @@ function harvestKindArtifacts(cwd, job, text, sessionId) {
   return paths.map((p) => (typeof p === "string" ? { kind: "file", path: p } : p));
 }
 
+function requiredEditFailure(job, editSummary) {
+  const requireEdit = Boolean(job.requireEdit || job.config?.requireEdit);
+  if (!requireEdit) return null;
+  const completedEditCalls = Number(editSummary?.completedEditCalls || 0);
+  const paths = Array.isArray(editSummary?.paths) ? editSummary.paths : [];
+  if (completedEditCalls > 0 && paths.length > 0) return null;
+  if (completedEditCalls > 0) {
+    return "Grok completed an editor tool call but reported no edit path; write completion was rejected.";
+  }
+  return (
+    "Grok exited without a completed search_replace or write tool call; " +
+    "narrated or hypothetical edits are not accepted as successful writes."
+  );
+}
+
 function finalizeJob(cwd, job, grokResult, extras = {}) {
   const parsed = grokResult.parsed;
-  const ok = grokResult.ok;
+  const editSummary = grokResult.editSummary || parsed?.editSummary || null;
+  const completionError = grokResult.ok ? requiredEditFailure(job, editSummary) : null;
+  const ok = grokResult.ok && !completionError;
   const text = parsed?.text || (!ok ? parsed?.error || grokResult.stderr : "") || grokResult.stdout;
   const sessionId = parsed?.sessionId ?? null;
   const status = ok ? "completed" : "failed";
@@ -290,7 +310,7 @@ function finalizeJob(cwd, job, grokResult, extras = {}) {
 
   const error = ok
     ? null
-    : humanizeGrokFailure({
+    : completionError || humanizeGrokFailure({
         parsedError: parsed?.error,
         stderr: grokResult.stderr,
         stdout: grokResult.stdout,
@@ -334,6 +354,7 @@ function finalizeJob(cwd, job, grokResult, extras = {}) {
     review,
     artifacts,
     usage,
+    editSummary,
     postPending,
     wantPostPending: Boolean(jobForPost.wantPostPending),
     grokSessionId: sessionId,
@@ -406,7 +427,10 @@ function maybeFinalizeBackgroundJob(cwd, job) {
   const payload = read.payload;
 
   const parsed = parseGrokJsonOutput(payload.stdout || "");
-  const ok = payload.exitCode === 0 && parsed.ok;
+  const editSummary = payload.editSummary || parsed.editSummary || null;
+  const completionError =
+    payload.exitCode === 0 && parsed.ok ? requiredEditFailure(job, editSummary) : null;
+  const ok = payload.exitCode === 0 && parsed.ok && !completionError;
   const text = parsed.text || parsed.error || payload.stdout || "";
   const sessionId = parsed.sessionId ?? payload.sessionId ?? null;
   const status = ok ? "completed" : "failed";
@@ -426,7 +450,7 @@ function maybeFinalizeBackgroundJob(cwd, job) {
 
   const error = ok
     ? null
-    : humanizeGrokFailure({
+    : completionError || humanizeGrokFailure({
         parsedError: parsed.error,
         stderr: payload.stderr,
         stdout: payload.stdout,
@@ -469,6 +493,7 @@ function maybeFinalizeBackgroundJob(cwd, job) {
     review,
     artifacts,
     usage,
+    editSummary,
     postPending,
     wantPostPending: Boolean(jobForPost.wantPostPending),
     grokSessionId: sessionId,
@@ -603,6 +628,7 @@ function runOrBackground(cwd, job, grokOptions, { background, json, renderPayloa
         error: finished.error,
         review: finished.review,
         artifacts: finished.artifacts,
+        editSummary: finished.editSummary,
         bestOfN: job.bestOfN,
         worktree: job.worktree,
         check: job.check
@@ -780,7 +806,8 @@ async function commandTask(argv) {
     bestOfN,
     worktree: worktree || null,
     worktreeRef: options["worktree-ref"] || null,
-    check
+    check,
+    requireEdit: writeMode
   });
 
   const job = createJobShell(cwd, {
@@ -795,6 +822,7 @@ async function commandTask(argv) {
       bestOfN,
       worktree: Boolean(worktree),
       check,
+      requireEdit: writeMode,
       config: jobConfig
     }
   });
@@ -808,7 +836,7 @@ async function commandTask(argv) {
     resume,
     maxTurns: options["max-turns"] ? Number(options["max-turns"]) : undefined,
     bestOfN,
-    check,
+    requireEdit: writeMode,
     worktree,
     worktreeRef: options["worktree-ref"],
     verbatim: Boolean(options.verbatim)
@@ -830,6 +858,7 @@ async function commandTask(argv) {
         error: finished.error,
         usage: finished.usage,
         artifacts: finished.artifacts,
+        editSummary: finished.editSummary,
         config: finished.config || jobConfig,
         bestOfN,
         worktree: Boolean(worktree),
@@ -1067,7 +1096,7 @@ async function commandWorkflow(argv) {
     const model = normalizeModel(options.model);
     const effort = normalizeEffort(options.effort, options.model);
     const jobConfig = controlToJobConfig(control, { workflowName: name });
-    // validate-only must not grant yolo write+shell — smoke-check only.
+    // validate-only must not grant always-approve write+shell — smoke-check only.
     const writeCapable = !validateOnly;
 
     const job = createJobShell(cwd, {
@@ -1226,7 +1255,7 @@ async function commandExecutePlan(argv) {
     resumePlanId
   });
   const jobConfig = controlToJobConfig(control, {});
-  // Dry-run must not get --yolo; report linearized order only.
+  // Dry-run must not get --always-approve; report linearized order only.
   const writeCapable = !dryRun;
 
   const job = createJobShell(cwd, {
@@ -1544,9 +1573,8 @@ async function commandMedia(argv, kind) {
     extras: { mediaDir: outputDir, media: true }
   });
 
-  // Grok 0.2.93: never pass --tools allowlist here (session create fails).
-  // Use default toolset + denylist; do not pass --yolo (classifier may deny it;
-  // single-prompt auto-approve still applies when configured).
+  // Use the Grok 1.0.x default toolset plus a denylist for media. Do not pass
+  // --always-approve: media tools follow the user's configured permission mode.
   // Grok media tools write under ~/.grok/sessions/...; the companion copies into outputDir.
   const grokOptions = {
     promptFile: job.promptFile,
@@ -1646,7 +1674,7 @@ async function commandStopGateReview(argv) {
   });
 
   const schema = fs.readFileSync(getReviewSchemaPath(), "utf8");
-  // Safer stop-gate posture: denylist editors/shell, no yolo, optional sandbox read-only.
+  // Safer stop-gate posture: denylist editors/shell, no always-approve, sandbox read-only.
   const grokResult = runGrok({
     promptFile: job.promptFile,
     cwd,

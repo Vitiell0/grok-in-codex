@@ -62,6 +62,6 @@ test("buildGrokArgs stop-gate safer posture flags", () => {
   assert.ok(args.includes("--sandbox"));
   assert.ok(args.includes("read-only"));
   assert.ok(args.includes("--no-subagents"));
-  assert.ok(!args.includes("--yolo"));
+  assert.ok(!args.includes("--always-approve"));
   assert.ok(args.includes("--disallowed-tools"));
 });
