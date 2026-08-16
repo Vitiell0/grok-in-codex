@@ -8,7 +8,9 @@ user-invocable: false
 
 Use through the Grok MCP tools. If MCP is unavailable, call the companion directly with `node plugins/grok/scripts/grok-companion.mjs <command> ...`.
 
-Recommended Grok CLI version: **≥ 0.2.118**.
+Supported Grok CLI line: **1.0.x**. Minimum: **1.0.0**; recommended: **1.0.4** or newer 1.0.x.
+
+Default code-task policy: **`grok-4.6` with `effort=high`**. The compatibility aliases `fast`, `default`, `deep`, and `grok` all resolve to this model and effort so an alias cannot silently select an older model.
 
 ## Workspace
 
@@ -23,6 +25,7 @@ workspace rather than the cached plugin directory. Direct companion calls can us
 - Each MCP call should make exactly one companion invocation.
 - Parallelism = multiple background companion jobs, not a serialized queue.
 - When several jobs are running, always pass job ids to `status` / `result` / `cancel`.
+- Parallel writers in one shared worktree must have disjoint file scopes. Run repository-wide verification only after every writer has stopped.
 
 ## Control flags (most write/plan commands)
 
@@ -43,9 +46,11 @@ MCP input keys map to companion flags:
 
 ## CLI posture
 
-- Prefer **denylist** (`--disallowed-tools`) over tools allowlist (Grok session-create bugs).
-- Media: no yolo / no tools allowlist.
-- `--dry-run` / `--validate-only` / babysit `list`: **read-only** (no yolo).
+- Valid built-in sandbox profiles are `off`, `workspace`, `read-only`, `strict`, and `devbox`. Use `workspace` for ordinary repository writes; `workspace-write` is not valid.
+- Prefer **denylist** (`--disallowed-tools`) over a version-sensitive tools allowlist. Grok exposes `run_terminal_command` to the model, but the documented filter ID remains `run_terminal_cmd`.
+- Headless writes use `--always-approve` inside the selected sandbox. Do not use `permissionMode=acceptEdits` for unattended jobs.
+- Media: no always-approve / no tools allowlist.
+- `--dry-run` / `--validate-only` / babysit `list`: **read-only** (no always-approve).
 - Write-capable default for rescue/design/execute/babysit add|check|remove.
 
 ## Depth notes
@@ -54,7 +59,7 @@ MCP input keys map to companion flags:
 - Design/workflow/plan/document jobs harvest copies into `.grok-designs/` / `.grok-workflows/` / `.grok-plans/` / `.grok-docs/`.
 - Review `postPending=true`: skips empty findings; empty/oversize diffs fail closed and save findings under `.grok-reviews/`.
 - Plan results prefer harvested `plan.md` body over narration.
-- Stop-gate uses sandbox `read-only` + denylist (no yolo).
+- Stop-gate uses sandbox `read-only` + denylist (no always-approve).
 
 ## State env
 
@@ -66,11 +71,12 @@ MCP input keys map to companion flags:
 ## Task (`grok_rescue`)
 
 - Exactly one `task` invocation per handoff
-- Map `fast` → `--model grok-composer-2.5-fast`
-- Map `deep` → `--model grok-4.5 --effort high`
+- Pin `grok-4.6` with `effort=high`; compatibility aliases resolve to the same pair.
 - `resume` → `--resume-last`; `resumeSession` → resume that id; `fresh` → no resume
-- Pass `worktree`, `check`, `bestOfN` through when present
+- Pass `worktree` and `bestOfN` through when present.
+- `check` is accepted only for caller compatibility and is not forwarded because Grok CLI 1.0.x has no `--check` flag. Run verification independently after the job finishes.
 - Default write-capable; `readOnly` only when requested
+- Write completion requires a structured, completed `search_replace` or `write` event with a reported edit path. Narration and literal tool-marker text are not completion evidence; inspect the Git diff independently.
 
 ## Plan (`grok_plan`)
 
@@ -99,3 +105,5 @@ MCP input keys map to companion flags:
 - `grok_status` / `grok_result` / `grok_cancel`
 - Status shows accumulated stream progress (text + thought tails); whitespace-only stays `running`
 - Result includes usage and artifacts when present
+- For write jobs, result includes `editSummary` with completed editor count, tool names, and reported paths.
+- Trust only a completed result plus an independently inspected diff and verification commands. Thought/text narration is never proof that a file changed.

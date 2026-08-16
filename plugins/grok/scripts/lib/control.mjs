@@ -173,6 +173,7 @@ export function controlToJobConfig(control, extras = {}) {
     worktree: extras.worktree ?? null,
     worktreeRef: extras.worktreeRef ?? null,
     check: Boolean(extras.check),
+    requireEdit: Boolean(extras.requireEdit),
     postPending: Boolean(extras.postPending),
     documentType: extras.documentType ?? null,
     workflowName: extras.workflowName ?? null,
@@ -186,7 +187,7 @@ export function controlToJobConfig(control, extras = {}) {
 export function applyControlToGrokOptions(grokOptions, control) {
   const fields = controlToGrokFields(control);
   const next = { ...grokOptions, ...fields };
-  // Plan mode must not auto-approve writes with yolo
+  // Plan mode must not auto-approve writes.
   if (fields.permissionMode === "plan") {
     next.yolo = false;
   }
@@ -235,5 +236,5 @@ export function parseSemver(version) {
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
-export const MIN_GROK_VERSION = "0.2.118";
-export const RECOMMENDED_GROK_VERSION = "0.2.118";
+export const MIN_GROK_VERSION = "1.0.0";
+export const RECOMMENDED_GROK_VERSION = "1.0.4";

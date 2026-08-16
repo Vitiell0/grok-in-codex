@@ -64,6 +64,26 @@ test("every MCP tool accepts an explicit workspace cwd", () => {
   }
 });
 
+test("MCP schemas expose only Grok CLI 1.0.x sandbox and permission values", () => {
+  const rescue = listToolDefinitions().find((tool) => tool.name === "grok_rescue");
+  assert.deepEqual(rescue.inputSchema.properties.sandbox.enum, [
+    "off",
+    "workspace",
+    "read-only",
+    "strict",
+    "devbox"
+  ]);
+  assert.ok(!rescue.inputSchema.properties.sandbox.enum.includes("workspace-write"));
+  assert.deepEqual(rescue.inputSchema.properties.permissionMode.enum, [
+    "default",
+    "acceptEdits",
+    "auto",
+    "dontAsk",
+    "bypassPermissions",
+    "plan"
+  ]);
+});
+
 test("MCP companion calls run in the requested workspace", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "grok-mcp-workspace-"));
   const response = await runCompanion("grok_status", { cwd: workspace, json: true });
@@ -107,7 +127,7 @@ test("buildCompanionInvocation maps rescue aliases, control flags, and flags", (
     check: true,
     bestOfN: 3,
     resume: true,
-    sandbox: "workspace-write",
+    sandbox: "workspace",
     noSubagents: true,
     maxTurns: 40
   });
@@ -125,7 +145,7 @@ test("buildCompanionInvocation maps rescue aliases, control flags, and flags", (
     "--best-of-n",
     "3",
     "--sandbox",
-    "workspace-write",
+    "workspace",
     "--no-subagents",
     "--max-turns",
     "40",
@@ -265,7 +285,7 @@ test("stdio MCP transport speaks NDJSON (Codex framing)", async () => {
     if (init && tools && status) {
       child.kill();
       assert.equal(init.result?.serverInfo?.name, "grok-in-codex");
-      assert.equal(init.result?.serverInfo?.version, "0.5.8");
+      assert.equal(init.result?.serverInfo?.version, "0.6.0");
       assert.ok(Array.isArray(tools.result?.tools));
       assert.equal(tools.result.tools.length, EXPECTED_TOOLS.length);
       assert.ok(tools.result.tools.some((t) => t.name === "grok_plan"));

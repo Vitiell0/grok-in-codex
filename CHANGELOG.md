@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0
+
+### Changed
+- Require Grok Build CLI 1.0.x (minimum 1.0.0; 1.0.4 recommended).
+- Default coding jobs and compatibility aliases to `grok-4.6` with high effort.
+- Use the documented `workspace` sandbox and `--always-approve` automation posture.
+- Stop forwarding the removed Grok CLI `--check` flag; retain the companion/MCP option as a deprecated compatibility input.
+
+### Fixed
+- Parse Grok 1.0.x `streaming-json` editor events and persist completed edit tools and reported paths.
+- Fail write rescues that exit successfully without a completed `search_replace` or `write` event, preventing narrated or hypothetical patches from being accepted as implemented work.
+- Keep `run_terminal_cmd` as the documented internal ID for `--disallowed-tools`, while recognizing the runtime-facing `run_terminal_command` name.
+- Reject invalid sandbox values at the MCP schema boundary.
+
 ## 0.5.8
 
 ### Fixed

@@ -5,15 +5,13 @@ import { spawn } from "node:child_process";
 
 import { binaryAvailable, runCommand } from "./process.mjs";
 
-// Grok CLI 0.2.93: --tools ALLOWLISTS often fail session create with a
-// server-side run_terminal_cmd background-param constraint error. Prefer
-// the default toolset + --disallowed-tools denylist instead.
-// Also avoid --yolo for media: the permission classifier may deny that flag;
-// single-prompt mode already auto-approves tools when the user config allows.
+// Grok CLI 1.0.x: prefer the default toolset plus a denylist for read-only
+// jobs. Grok exposes `run_terminal_command` to the model, while the documented
+// filter ID remains `run_terminal_cmd`.
 export const READ_ONLY_DISALLOWED_TOOLS =
-  "run_terminal_cmd,search_replace,write_file,edit_file";
+  "run_terminal_cmd,search_replace,write";
 export const MEDIA_DISALLOWED_TOOLS =
-  "run_terminal_cmd,write_file,edit_file,search_replace";
+  "run_terminal_cmd,search_replace,write";
 
 // Deprecated: kept only for tests / callers that still pass tools= explicitly.
 export const READ_ONLY_TOOLS = "read_file,grep,list_dir";
@@ -155,9 +153,6 @@ export function buildGrokArgs(options = {}) {
   if (options.bestOfN && Number(options.bestOfN) > 1) {
     args.push("--best-of-n", String(options.bestOfN));
   }
-  if (options.check) {
-    args.push("--check");
-  }
   if (options.worktree) {
     if (typeof options.worktree === "string" && options.worktree !== "true") {
       args.push("--worktree", options.worktree);
@@ -169,7 +164,7 @@ export function buildGrokArgs(options = {}) {
     args.push("--worktree-ref", options.worktreeRef);
   }
 
-  // Control surface (Grok Build 0.2.118+)
+  // Control surface (Grok Build 1.0.x)
   if (options.sandbox) {
     args.push("--sandbox", options.sandbox);
   }
@@ -206,9 +201,8 @@ export function buildGrokArgs(options = {}) {
     args.push("--no-plan");
   }
 
-  // Tool gating strategy (Grok 0.2.93-safe):
-  // - Prefer --disallowed-tools (denylist) over --tools (allowlist).
-  // - Only pass --tools when forceToolsAllowlist is true (debug / future CLI).
+  // Prefer --disallowed-tools (denylist) over a version-sensitive allowlist.
+  // Only pass --tools when forceToolsAllowlist is true for diagnostics.
   if (options.forceToolsAllowlist && options.tools) {
     args.push("--tools", options.tools);
   }
@@ -222,7 +216,7 @@ export function buildGrokArgs(options = {}) {
   } else if (options.write && !isPlanMode) {
     // Full coding agent: default toolset + auto-approve.
     if (options.yolo !== false) {
-      args.push("--yolo");
+      args.push("--always-approve");
     }
   } else if (!options.write || isPlanMode) {
     // Read-only review / diagnosis / plan mode: strip shell + source editors.
@@ -239,6 +233,15 @@ export function buildGrokArgs(options = {}) {
     args.push("--rules", options.rules);
   } else if (options.media) {
     // Rules supplied by the media command (output dir, no source edits).
+  } else if (options.write && !isPlanMode) {
+    args.push(
+      "--rules",
+      [
+        "Implementation mode: use search_replace or write to make the requested source edits.",
+        "Do not emit, narrate, or simulate a hypothetical diff instead of editing files.",
+        "If an edit cannot be made, report the concrete blocker and stop."
+      ].join(" ")
+    );
   } else if (!options.write) {
     args.push(
       "--rules",
@@ -251,6 +254,121 @@ export function buildGrokArgs(options = {}) {
   }
 
   return args;
+}
+
+/**
+ * Accumulate the parts of Grok CLI 1.0.x streaming-json needed by the plugin.
+ * This function is embedded into the detached background worker, so keep it
+ * self-contained and JSON-serializable.
+ */
+export function updateGrokStreamState(state, event) {
+  const next = state || {};
+  next.text = String(next.text || "");
+  next.thought = String(next.thought || "");
+  next.toolCalls = next.toolCalls && typeof next.toolCalls === "object" ? next.toolCalls : {};
+  next.sessionId = next.sessionId || null;
+  next.stopReason = next.stopReason || null;
+  next.requestId = next.requestId || null;
+  next.error = next.error || null;
+
+  if (!event || typeof event !== "object") return next;
+
+  if (event.type === "text" && typeof event.data === "string") {
+    next.text += event.data;
+  } else if (event.type === "thought" && typeof event.data === "string") {
+    next.thought += event.data;
+  } else if (event.type === "end") {
+    next.stopReason = event.stopReason || event.stop_reason || next.stopReason;
+  } else if (event.type === "error") {
+    next.error = event.message || event.data || "Grok returned a streaming error";
+  }
+
+  if (event.sessionId) next.sessionId = event.sessionId;
+  if (event.requestId) next.requestId = event.requestId;
+
+  if (event.type === "tool_call" || event.type === "tool_call_update") {
+    const id = event.toolCallId || event.tool_call_id;
+    if (!id) return next;
+    const existing = next.toolCalls[id] || {};
+    const toolName = String(
+      event.toolName || event.tool_name || event.title || existing.toolName || ""
+    ).toLowerCase();
+    const kind = String(event.kind || existing.kind || "").toLowerCase();
+    const status = event.status == null ? existing.status || null : String(event.status).toLowerCase();
+    const paths = Array.isArray(existing.paths) ? [...existing.paths] : [];
+    const addPath = (value) => {
+      if (typeof value === "string" && value.trim() && !paths.includes(value.trim())) {
+        paths.push(value.trim());
+      }
+    };
+    for (const location of Array.isArray(event.locations) ? event.locations : []) {
+      addPath(location?.path);
+    }
+    const rawInput = event.rawInput || event.raw_input || {};
+    addPath(rawInput.file_path);
+    addPath(rawInput.path);
+    addPath(rawInput.target_file);
+    for (const content of Array.isArray(event.content) ? event.content : []) {
+      addPath(content?.path);
+    }
+    next.toolCalls[id] = { toolName, kind, status, paths };
+  }
+
+  return next;
+}
+
+export function summarizeGrokStreamState(state) {
+  const calls = Object.values(state?.toolCalls || {});
+  const completed = calls.filter((call) => {
+    const toolName = String(call?.toolName || "").toLowerCase();
+    const isEditor = ["search_replace", "write"].includes(toolName);
+    return isEditor && call?.status === "completed";
+  });
+  return {
+    completedEditCalls: completed.length,
+    tools: [...new Set(completed.map((call) => call.toolName).filter(Boolean))],
+    paths: [...new Set(completed.flatMap((call) => call.paths || []).filter(Boolean))]
+  };
+}
+
+export function parseGrokStreamingOutput(stdout) {
+  const lines = String(stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const events = [];
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line);
+      if (event && typeof event === "object" && typeof event.type === "string") {
+        events.push(event);
+      }
+    } catch {
+      // A mixed diagnostic line means this is not purely streaming JSON.
+    }
+  }
+  const isStream = events.some((event) =>
+    ["available_commands", "text", "thought", "tool_call", "tool_call_update", "usage", "end"].includes(
+      event.type
+    )
+  );
+  if (!isStream) return null;
+
+  let state = {};
+  for (const event of events) state = updateGrokStreamState(state, event);
+  const editSummary = summarizeGrokStreamState(state);
+  return {
+    ok: !state.error,
+    text: state.text,
+    sessionId: state.sessionId,
+    stopReason: state.stopReason,
+    requestId: state.requestId,
+    thought: state.thought,
+    error: state.error,
+    editSummary,
+    raw: String(stdout ?? ""),
+    parsed: { editSummary }
+  };
 }
 
 /**
@@ -270,7 +388,7 @@ export function humanizeGrokFailure(sources = {}) {
 
   const compact = blob.replace(/\s+/g, " ").trim();
 
-  // Tool allowlist / session-create constraint (known on Grok 0.2.93)
+  // Tool allowlist / session-create constraint.
   if (
     /RequirementError/i.test(blob) &&
     (/run_terminal_cmd/i.test(blob) || /background/i.test(blob) || /--tools/i.test(blob))
@@ -306,7 +424,7 @@ export function humanizeGrokFailure(sources = {}) {
   }
 
   if (/model .+ not found|unknown model|invalid model/i.test(blob)) {
-    return "Grok rejected the model id. Use a valid model (e.g. `grok-4.5` or `--model fast`).";
+    return "Grok rejected the model id. Use a valid model (e.g. `grok-4.6`).";
   }
 
   // Prefer structured JSON error message if present in the blob
@@ -349,6 +467,9 @@ export function parseGrokJsonOutput(stdout) {
     return { ok: false, error: "Grok produced empty output", raw: "" };
   }
 
+  const streaming = parseGrokStreamingOutput(text);
+  if (streaming) return streaming;
+
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -376,6 +497,7 @@ export function parseGrokJsonOutput(stdout) {
           stopReason: parsed.stopReason ?? null,
           requestId: parsed.requestId ?? null,
           thought: parsed.thought ?? null,
+          editSummary: parsed.editSummary ?? null,
           raw: text,
           parsed
         };
@@ -413,7 +535,10 @@ export function runGrok(options = {}) {
     throw new Error(availability.reason);
   }
 
-  const args = buildGrokArgs(options);
+  const args = buildGrokArgs({
+    ...options,
+    outputFormat: options.requireEdit ? "streaming-json" : options.outputFormat
+  });
   const result = runCommand(availability.binary, args, {
     cwd: options.cwd,
     maxBuffer: options.maxBuffer ?? 40 * 1024 * 1024,
@@ -446,6 +571,7 @@ export function runGrok(options = {}) {
     stdout,
     stderr,
     parsed,
+    editSummary: parsed.editSummary ?? null,
     ok
   };
 }
@@ -482,6 +608,10 @@ export function getStreamProgressHelperSource() {
   return formatStreamProgressMessage.toString();
 }
 
+export function getStreamStateHelperSource() {
+  return [updateGrokStreamState.toString(), summarizeGrokStreamState.toString()].join("\n");
+}
+
 /**
  * Build the Node `-e` script that runs a detached Grok process and streams
  * progress. Exported so tests can assert the progress helper is embedded.
@@ -497,6 +627,7 @@ export function buildGrokBackgroundWrapperSource({
 }) {
   // Embed the same function the module exports (not a hand-maintained copy).
   const streamProgressHelper = getStreamProgressHelperSource();
+  const streamStateHelper = getStreamStateHelperSource();
   return `
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -547,8 +678,10 @@ let thoughtAcc = "";
 let sessionId = null;
 let lineCount = 0;
 let lastMessage = "running";
+let streamState = {};
 
 ${streamProgressHelper}
+${streamStateHelper}
 
 function handleStreamLine(line) {
   lineCount += 1;
@@ -556,6 +689,7 @@ function handleStreamLine(line) {
   if (!trimmed) return;
   try {
     const evt = JSON.parse(trimmed);
+    streamState = updateGrokStreamState(streamState, evt);
     if (evt.type === "text" && evt.data) {
       textAcc += evt.data;
       // Tail of accumulated text; floor empty so whitespace-only tokens keep "running"
@@ -612,13 +746,24 @@ child.on("close", (code, signal) => {
 
   let finalStdout = stdout;
   if (streaming) {
+    const editSummary = summarizeGrokStreamState(streamState);
     // Reconstruct a json-format-like payload for the companion parser.
-    finalStdout = JSON.stringify({
-      text: textAcc || stdout,
-      stopReason: code === 0 ? "EndTurn" : "Error",
-      sessionId,
-      requestId: null
-    });
+    finalStdout = JSON.stringify(
+      streamState.error
+        ? {
+            type: "error",
+            message: streamState.error,
+            sessionId,
+            editSummary
+          }
+        : {
+            text: textAcc || stdout,
+            stopReason: code === 0 ? "EndTurn" : "Error",
+            sessionId,
+            requestId: null,
+            editSummary
+          }
+    );
   }
 
   const payload = {
@@ -627,7 +772,8 @@ child.on("close", (code, signal) => {
     stdout: finalStdout,
     stderr,
     finishedAt: new Date().toISOString(),
-    sessionId
+    sessionId,
+    editSummary: streaming ? summarizeGrokStreamState(streamState) : null
   };
   try {
     // Atomic write: only publish result.json when the full payload is on disk.
@@ -635,9 +781,10 @@ child.on("close", (code, signal) => {
     const tmp = resultFile + ".tmp." + process.pid;
     fs.writeFileSync(tmp, JSON.stringify(payload, null, 2) + "\\n");
     fs.renameSync(tmp, resultFile);
+    const completed = code === 0 && !streamState.error;
     writeProgress({
-      phase: code === 0 ? "completed" : "failed",
-      message: code === 0 ? "completed" : "failed with code " + code,
+      phase: completed ? "completed" : "failed",
+      message: completed ? "completed" : streamState.error || "failed with code " + code,
       lines: lineCount,
       sessionId
     });
